@@ -24,6 +24,10 @@ coverage/
 *.mobileprovision
 *.provisionprofile
 
+# Per-developer Xcode override (e.g. the Mac's LAN address for a physical iPhone). Never commit.
+ios/Config/Local.xcconfig
+ios/Config/Local.Release.xcconfig
+
 # Personal Claude Code settings (shared project settings may be committed later, with approval)
 .claude/settings.local.json
 

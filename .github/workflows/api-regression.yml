@@ -1,5 +1,7 @@
-# MonetaLab — PR regression for the backend API and database (PRD CI-01), M1 + M2.
-# Plan: docs/slice-2-plan.md. Decisions: D-012, D-014, D-015, D-033, D-036 in docs/decisions.md.
+# MonetaLab — PR regression for the backend API and database (PRD CI-01), M1 + M2 + M3.
+# Plan: docs/slice-2-plan.md. Decisions: D-012, D-014, D-015, D-033, D-036, D-038, D-047 in docs/decisions.md.
+# M3 Apple specs run against a third harness-owned server (BILLING_PROVIDER=apple, Sandbox) that trusts only a
+# throwaway test CA generated per run: no Apple credentials, keys or network access are used or needed.
 # M2 time-dependent specs run against a second harness-owned server whose business clock is a temp file
 # (MONETALAB_TEST_CLOCK_FILE); no HTTP endpoint can change time.
 # CI only: nothing is deployed. No secrets are used. The DB credentials are disposable
@@ -117,6 +119,7 @@ jobs:
         run: |
           {
             echo "## API/DB regression"
+            echo "_Apple (M3) specs use per-run signed test fixtures, not Apple-signed data._"
             for suite in unit integration api; do
               echo "### ${suite}"
               if [ -f "test-results/${suite}.log" ]; then
