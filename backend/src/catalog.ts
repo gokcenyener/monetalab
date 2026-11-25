@@ -3,6 +3,7 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
+import { appleCatalog } from './billing/apple/products.ts';
 import { PLAN_IDS, PLANS, TRIAL_OFFER } from './subscriptions/lifecycle.ts';
 
 /** PRD §2.3. Placeholder action names; costs are authoritative here. */
@@ -51,6 +52,8 @@ export function registerCatalogRoutes(app: FastifyInstance, pool: pg.Pool): void
       subscriptions: SUBSCRIPTION_PLANS,
       rewardedAd: REWARDED_AD,
       operations: OPERATION_ACTIONS.map((id) => ({ id, name: OPERATION_NAMES[id], cost: OPERATION_COSTS[id] })),
+      // M3 (D-039): StoreKit product ids per package/plan. Credits are still decided by the server, never by the store.
+      appleProducts: appleCatalog(),
     };
   });
 }

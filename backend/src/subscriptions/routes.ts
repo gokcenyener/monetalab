@@ -16,7 +16,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { authOf, requireAuth } from '../auth/require-auth.ts';
-import { PURCHASE_OUTCOMES, type BillingProvider, type PurchaseOutcome } from '../billing/provider.ts';
+import { PURCHASE_OUTCOMES, type MockBillingProvider, type PurchaseOutcome } from '../billing/provider.ts';
 import type { Clock } from '../clock.ts';
 import { readWallet } from '../credits/wallet.ts';
 import { withTransaction } from '../db/tx.ts';
@@ -49,20 +49,27 @@ const notificationBody = {
 type PurchaseBody = { planId: PlanId; transactionId: string; mockOutcome?: PurchaseOutcome };
 type NotificationBody = { eventId: string; type: 'RENEWED' | 'EXPIRED' | 'REFUNDED' | 'REVOKED'; transactionId: string; periodStart?: string };
 
-export function registerSubscriptionRoutes(app: FastifyInstance, pool: pg.Pool, deps: { billing: BillingProvider; clock: Clock }): void {
+/**
+ * Read routes (current, history, restore) exist for every provider. The mock mutation routes (purchase, change-plan,
+ * cancel, resume, mock-notifications) are registered ONLY when the server runs the mock provider (`deps.mock`): in
+ * Apple mode, subscription changes come exclusively from Apple-signed data (src/billing/apple/routes.ts).
+ */
+export function registerSubscriptionRoutes(app: FastifyInstance, pool: pg.Pool, deps: { mock: MockBillingProvider | null; clock: Clock }): void {
   const guard = requireAuth(pool);
+  const mock = deps.mock;
+  const provider = mock ? 'mock' : 'apple';
 
   async function respond(userId: string, input: LifecycleInput) {
     const now = deps.clock.now();
     return withTransaction(pool, async (tx) => {
-      const outcome = await runLifecycle(tx, { billing: deps.billing, now }, userId, input);
+      const outcome = await runLifecycle(tx, { billing: mock!, now }, userId, input);
       return {
         status: outcome.status,
         body: {
           result: outcome.result,
           replayed: outcome.replayed,
           period: outcome.period,
-          ...(await subscriptionView(tx, userId, now)),
+          ...(await subscriptionView(tx, userId, now, provider)),
           wallet: await readWallet(tx, userId),
         },
       };
@@ -75,7 +82,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, pool: pg.Pool, 
     return withTransaction(pool, async (tx) => {
       await lockUser(tx, userId);
       await reconcileUser(tx, userId, now);
-      return { ...(await subscriptionView(tx, userId, now)), wallet: await readWallet(tx, userId), serverTime: now.toISOString() };
+      return { ...(await subscriptionView(tx, userId, now, provider)), wallet: await readWallet(tx, userId), serverTime: now.toISOString() };
     });
   }
 
@@ -110,6 +117,9 @@ export function registerSubscriptionRoutes(app: FastifyInstance, pool: pg.Pool, 
       events: events.rows.map((r) => ({ ...r, occurredAt: iso(r.occurredAt), receivedAt: iso(r.receivedAt) })),
     };
   });
+
+  // Everything below is the deterministic mock provider only.
+  if (!mock) return;
 
   app.post<{ Body: PurchaseBody }>('/subscriptions/purchase', { onRequest: guard, schema: { body: purchaseBody } }, async (request, reply) => {
     const { planId, transactionId, mockOutcome } = request.body;
@@ -153,7 +163,7 @@ export function registerSubscriptionRoutes(app: FastifyInstance, pool: pg.Pool, 
 
   app.post<{ Body: NotificationBody }>('/subscriptions/mock-notifications', { onRequest: guard, schema: { body: notificationBody } }, async (request, reply) => {
     const userId = authOf(request).user.id;
-    const { notification } = await deps.billing.verifyNotification(request.body);
+    const { notification } = await mock.verifyNotification(request.body);
     const { eventId, type, transactionId, periodStart } = notification;
     const start = periodStart === undefined ? undefined : new Date(periodStart);
     if (start && Number.isNaN(start.getTime())) throw new ApiError(400, 'VALIDATION_ERROR', 'periodStart is not a valid date');

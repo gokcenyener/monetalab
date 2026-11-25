@@ -2,7 +2,7 @@
   "name": "monetalab-backend",
   "version": "0.0.0",
   "private": true,
-  "description": "MonetaLab M1 backend (QA portfolio fixture)",
+  "description": "MonetaLab backend (QA portfolio fixture): M1 credits, M2 mock lifecycle, M3 Apple StoreKit verification",
   "type": "module",
   "engines": {
     "node": ">=24.2"
@@ -22,15 +22,20 @@
     "test:api:ci": "mkdir -p test-results && PLAYWRIGHT_REPORTS=1 playwright test",
     "db:seed:demo": "node src/db/seed.ts",
     "e2e:server": "node tests/api/support/e2e-server.ts",
-    "analytics:report": "node src/analytics/reports.ts"
+    "analytics:report": "node src/analytics/reports.ts",
+    "apple:reconcile": "node src/billing/apple/reconcile-cli.ts",
+    "notifications:start": "node src/notifications-server.ts",
+    "apple:test-notification": "node src/billing/apple/test-notification-cli.ts"
   },
   "devDependencies": {
     "@playwright/test": "1.65.1",
     "@types/node": "24.19.2",
     "@types/pg": "8.23.1",
+    "jsrsasign": "11.1.5",
     "typescript": "7.0.2"
   },
   "dependencies": {
+    "@apple/app-store-server-library": "3.1.0",
     "fastify": "5.12.8",
     "pg": "8.23.1"
   }

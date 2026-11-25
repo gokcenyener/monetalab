@@ -68,7 +68,9 @@ const rewardBody = {
   },
 } as const;
 
-export function registerAdRoutes(app: FastifyInstance, pool: pg.Pool, deps: { ads: AdProvider; clock: Clock }): void {
+/** `ads: null` (API_EXPOSURE=tunnel): no ad network exists, so the quota stays readable but nothing is ever eligible and
+ *  the mock reward route is not registered at all. */
+export function registerAdRoutes(app: FastifyInstance, pool: pg.Pool, deps: { ads: AdProvider | null; clock: Clock }): void {
   const guard = requireAuth(pool);
 
   app.get<{ Querystring: { action?: OperationAction } }>('/ads/quota', { onRequest: guard, schema: { querystring: actionQuery } }, async (request) => {
@@ -80,10 +82,13 @@ export function registerAdRoutes(app: FastifyInstance, pool: pg.Pool, deps: { ad
       const quota = await quotaFor(tx, userId, now);
       const wallet = await readWallet(tx, userId);
       const action = request.query.action;
-      return { quota, ...(action && { eligibility: { action, ...eligibility(wallet, action, quota.remaining) } }), wallet, serverTime: now.toISOString() };
+      const unavailable = deps.ads ? {} : { eligible: false, reason: 'ADS_UNAVAILABLE' };
+      return { quota, ...(action && { eligibility: { action, ...eligibility(wallet, action, quota.remaining), ...unavailable } }), wallet, serverTime: now.toISOString() };
     });
   });
 
+  if (!deps.ads) return;
+  const ads = deps.ads;
   app.post<{ Body: { adEventId: string; action: OperationAction; mockOutcome?: AdOutcome } }>(
     '/ads/rewards',
     { onRequest: guard, schema: { body: rewardBody } },
@@ -98,9 +103,9 @@ export function registerAdRoutes(app: FastifyInstance, pool: pg.Pool, deps: { ad
         const existing = await tx.query<Row>(
           `SELECT a.id, a.user_id, a.action, a.ad_outcome, a.status, a.utc_day::text AS utc_day, a.credits
              FROM ad_rewards a WHERE a.provider = $1 AND a.ad_event_id = $2`,
-          [deps.ads.name, adEventId],
+          [ads.name, adEventId],
         );
-        const verified = await deps.ads.verifyReward({ adEventId, mockOutcome });
+        const verified = await ads.verifyReward({ adEventId, mockOutcome });
         if (existing.rows[0]) {
           const row = existing.rows[0];
           if (row.user_id !== userId || row.action !== action || row.ad_outcome !== verified.outcome) return { kind: 'conflict' as const };
@@ -121,7 +126,7 @@ export function registerAdRoutes(app: FastifyInstance, pool: pg.Pool, deps: { ad
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            ON CONFLICT (provider, ad_event_id) DO NOTHING
            RETURNING id, user_id, action, ad_outcome, status, utc_day::text AS utc_day, credits`,
-          [userId, deps.ads.name, adEventId, action, verified.outcome, status, quota.utcDay,
+          [userId, ads.name, adEventId, action, verified.outcome, status, quota.utcDay,
             status === 'REWARDED' ? quota.used + 1 : null, status === 'REWARDED' ? AD_REWARD_CREDITS : 0, now],
         );
         const row = inserted.rows[0];
