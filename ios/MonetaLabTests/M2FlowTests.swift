@@ -47,6 +47,20 @@ final class M2FlowTests: XCTestCase {
         XCTAssertEqual(api.quotaCalls, callsBefore, "the generic store never asks for ads")
     }
 
+    func testAdSectionIsHiddenWhenTheServerHasNoAdNetwork() async {
+        // API_EXPOSURE=tunnel (TestFlight QA): the server reports ADS_UNAVAILABLE and has no reward route.
+        api.defaultQuota = AdQuotaResponse(quota: FakeAPI.quota(used: 0),
+                                           eligibility: AdEligibility(action: "STANDARD", eligible: false, reason: "ADS_UNAVAILABLE", required: 500, available: 0),
+                                           wallet: Wallet(balances: .zero, total: 0))
+        let pw = paywall()
+        await pw.load()
+        XCTAssertFalse(pw.adsAvailable)
+        XCTAssertFalse(pw.canWatchAd)
+        api.defaultQuota = AdQuotaResponse(quota: FakeAPI.quota(used: 0), eligibility: FakeAPI.eligibility(true), wallet: Wallet(balances: .zero, total: 0))
+        await pw.load()
+        XCTAssertTrue(pw.adsAvailable, "local/mock servers keep the ad section")
+    }
+
     func testCompletedAdThatCoversTheCostDismissesThePaywallWithoutRunningTheOperation() async {
         let op = await blockedOperation(required: 500, available: 400)
         let pw = paywall()
