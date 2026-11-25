@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// Paywall state: Subscription | Credits tabs (PRD §3.1), M2.
@@ -59,6 +60,12 @@ final class PaywallModel: ObservableObject {
 
     var isBusy: Bool { isPurchasing || isWatchingAd }
 
+    /// StoreKit purchases (server BILLING_PROVIDER=apple). nil = the M1/M2 mock provider with its test controls.
+    let storeKit: StoreKitPurchaseCoordinator?
+    /// StoreKit's introductory-offer eligibility for Basic (StoreKit mode only).
+    @Published private(set) var storeTrialEligible: Bool?
+    var isStoreKit: Bool { storeKit != nil }
+
     let required: Int?
     /// The blocked operation (e.g. "STANDARD"). Ads are only offered in that context (PRD §3.1, §7 #5).
     let action: String?
@@ -70,27 +77,54 @@ final class PaywallModel: ObservableObject {
     private(set) var pendingTransactionId: String?
     private(set) var pendingSubscriptionId: String?
     private(set) var pendingAdEventId: String?
+    /// Re-renders the paywall when StoreKit products arrive after it opened.
+    private var storeKitChanges: AnyCancellable?
 
     init(required: Int?, action: String? = nil, api: MonetaLabAPI, token: @escaping () -> String?, onUnauthenticated: @escaping () -> Void,
-         makeTransactionId: @escaping () -> String = { "ios-\(UUID().uuidString)" }) {
+         makeTransactionId: @escaping () -> String = { "ios-\(UUID().uuidString)" }, storeKit: StoreKitPurchaseCoordinator? = nil) {
+        self.storeKit = storeKit
         self.required = required
         self.action = action
         self.api = api
         self.token = token
         self.onUnauthenticated = onUnauthenticated
         self.makeTransactionId = makeTransactionId
+        storeKitChanges = storeKit?.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
     }
 
-    /// Server-decided trial message, present only when eligible.
-    var trialMessage: String? { subscriptionState?.trial.offer?.message }
+    /// StoreKit mode: true when StoreKit returned this App Store product (only then can it be shown or bought).
+    func isAvailableInStore(packageId: String) -> Bool {
+        guard let storeKit else { return true }
+        return storeKit.storeProductID(packageId: packageId).map { storeKit.products[$0] != nil } ?? false
+    }
+    func isAvailableInStore(planId: String) -> Bool {
+        guard let storeKit else { return true }
+        return storeKit.storeProductID(planId: planId).map { storeKit.products[$0] != nil } ?? false
+    }
+    /// StoreKit mode: the last product request was empty, partial or failed.
+    var storeProductsIncomplete: Bool { storeKit.map { $0.productReport?.isComplete != true } ?? false }
+
+    /// Server-decided trial message, present only when eligible. With StoreKit it also needs Apple's eligibility for
+    /// this Apple ID (D-042): both must agree before any trial messaging is shown (PRD §3.1).
+    var trialMessage: String? {
+        guard let message = subscriptionState?.trial.offer?.message else { return nil }
+        if isStoreKit { return storeTrialEligible == true ? message : nil }
+        return message
+    }
     var currentSubscription: SubscriptionInfo? { subscriptionState?.subscription }
     var canWatchAd: Bool { action != nil && adEligibility?.eligible == true && !isBusy }
+    /// false when the server has no ad network (API_EXPOSURE=tunnel, e.g. TestFlight): the ad section is hidden.
+    var adsAvailable: Bool { adEligibility?.reason != "ADS_UNAVAILABLE" }
 
     /// Loads subscription state and (for a blocked action) the ad quota. Safe to call repeatedly (re-opened paywall).
     func load() async {
         guard let token = token() else { return }
+        await storeKit?.loadProductsIfIncomplete()
         do {
             subscriptionState = try await api.subscriptionState(token: token)
+            if let storeKit, let planId = subscriptionState?.trial.offer?.planId {
+                storeTrialEligible = await storeKit.isEligibleForIntroOffer(planId: planId)
+            }
             if let action {
                 let quota = try await api.adQuota(token: token, action: action)
                 adQuota = quota.quota
@@ -107,6 +141,13 @@ final class PaywallModel: ObservableObject {
     /// Credits tab Continue: purchase the selected pack. Returns the server's wallet after the attempt.
     func continueTapped() async -> Wallet? {
         guard let packageId = selectedPackageId, let token = token(), !isBusy else { return nil }
+        if let storeKit {
+            guard let productID = storeKit.storeProductID(packageId: packageId) else {
+                message = "This pack is not available in the App Store."
+                return nil
+            }
+            return await buyWithStoreKit(storeKit, productID: productID)
+        }
         isPurchasing = true
         message = nil
         defer { isPurchasing = false }
@@ -144,6 +185,14 @@ final class PaywallModel: ObservableObject {
                 ? "You already have \(current.name)."
                 : "Downgrades take effect at your next renewal. Change plans on the Plan tab."
             return nil
+        }
+        if let storeKit {
+            // The App Store applies a higher tier in the same group as an immediate upgrade (SUB-03).
+            guard let productID = storeKit.storeProductID(planId: plan.id) else {
+                message = "This plan is not available in the App Store."
+                return nil
+            }
+            return await buyWithStoreKit(storeKit, productID: productID)
         }
         isPurchasing = true
         message = nil
@@ -201,6 +250,34 @@ final class PaywallModel: ObservableObject {
         } catch {
             pendingAdEventId = nil
             adMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
+        return nil
+    }
+
+    /// StoreKit purchase: the wallet comes only from the server's answer to Apple's signed transaction.
+    private func buyWithStoreKit(_ storeKit: StoreKitPurchaseCoordinator, productID: String) async -> Wallet? {
+        isPurchasing = true
+        message = nil
+        defer { isPurchasing = false }
+        let outcome = await storeKit.buy(productID: productID)
+        switch outcome {
+        case let .delivered(response):
+            subscriptionState = SubscriptionStateResponse(subscription: response.subscription, trial: response.trial, wallet: response.wallet)
+            message = StoreKitPurchaseCoordinator.describe(response)
+            appendShortfall(response.wallet)
+            await refreshAdEligibility()
+            return response.wallet
+        case .pending:
+            message = "Purchase pending approval. Credits are added after the App Store completes it."
+        case .cancelled:
+            message = "Purchase cancelled. Your balance is unchanged."
+        case .deferred:
+            // Kept unfinished in StoreKit and delivered again later (launch, foreground, Transaction.updates).
+            message = "Your purchase is safe and will be added when the server can confirm it." 
+        case let .rejected(_, text):
+            message = text
+        case let .failed(text):
+            message = text
         }
         return nil
     }

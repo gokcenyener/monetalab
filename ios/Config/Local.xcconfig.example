@@ -1,0 +1,6 @@
+// Copy to ios/Config/Local.xcconfig (git-ignored) to point Debug builds on a physical iPhone at the Mac's backend.
+// Start the backend with API_HOST=:: (see README "Physical iPhone"). Prefer the Mac's Bonjour name
+// (scutil --get LocalHostName, plus ".local"): unlike the Wi-Fi IP (ipconfig getifaddr en0) it survives DHCP changes.
+// [sdk=iphoneos*] limits it to device builds: the Simulator keeps 127.0.0.1.
+// Plain HTTP is allowed only for local-network addresses (NSAllowsLocalNetworking); Release builds ignore this file.
+MONETALAB_API_BASE_URL[sdk=iphoneos*] = http:/$()/Your-Mac-Name.local:3000

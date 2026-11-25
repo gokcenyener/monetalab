@@ -269,6 +269,38 @@ struct AdRewardResponse: Codable, Equatable {
     let wallet: Wallet
 }
 
+// MARK: - M3 Apple StoreKit
+
+/// Which billing provider the server runs. "mock" keeps the M1/M2 deterministic test controls; "apple" uses StoreKit 2.
+struct BillingConfig: Codable, Equatable { let provider: String }
+
+struct AppleProducts: Codable, Equatable {
+    let subscriptionGroupName: String
+    /// Server package/plan id -> StoreKit product id.
+    let consumables: [String: String]
+    let subscriptions: [String: String]
+}
+
+struct AppleAccount: Codable, Equatable {
+    let environment: String
+    let bundleId: String
+    /// Passed to StoreKit as appAccountToken; Apple signs it into the transaction so the server can prove ownership.
+    let appAccountToken: String
+    let products: AppleProducts
+}
+
+struct AppleTransactionResponse: Codable, Equatable {
+    let result: String
+    let productType: String
+    let transactionId: String
+    let creditsGranted: Int
+    /// The server durably accepted the transaction: only then does the app call Transaction.finish().
+    let finishTransaction: Bool
+    let subscription: SubscriptionInfo?
+    let trial: TrialInfo
+    let wallet: Wallet
+}
+
 extension Int {
     /// "5,000"-style formatting for credit amounts.
     var credits: String { formatted(.number.grouping(.automatic)) }

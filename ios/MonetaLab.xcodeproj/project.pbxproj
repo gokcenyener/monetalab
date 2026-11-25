@@ -28,12 +28,26 @@
 		A10000000000000000000202 /* MonetaLabTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MonetaLabTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000203 /* MonetaLabUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MonetaLabUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A10000000000000000000204 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		A10000000000000000000205 /* Debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Debug.xcconfig; sourceTree = "<group>"; };
+		A10000000000000000000206 /* Release.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Release.xcconfig; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		A10000000000000000000401 /* MonetaLab */ = {isa = PBXFileSystemSynchronizedRootGroup; path = MonetaLab; sourceTree = "<group>"; };
-		A10000000000000000000402 /* MonetaLabTests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = MonetaLabTests; sourceTree = "<group>"; };
-		A10000000000000000000403 /* MonetaLabUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; path = MonetaLabUITests; sourceTree = "<group>"; };
+		A10000000000000000000401 /* MonetaLab */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MonetaLab;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000402 /* MonetaLabTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MonetaLabTests;
+			sourceTree = "<group>";
+		};
+		A10000000000000000000403 /* MonetaLabUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = MonetaLabUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -86,6 +100,8 @@
 			isa = PBXGroup;
 			children = (
 				A10000000000000000000204 /* Info.plist */,
+				A10000000000000000000205 /* Debug.xcconfig */,
+				A10000000000000000000206 /* Release.xcconfig */,
 			);
 			path = Config;
 			sourceTree = "<group>";
@@ -309,9 +325,12 @@
 		};
 		A10000000000000000000712 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000205 /* Debug.xcconfig */;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = K77523YT8C;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;
@@ -335,9 +354,12 @@
 		};
 		A10000000000000000000713 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = A10000000000000000000206 /* Release.xcconfig */;
 			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_STYLE = Automatic;
 				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = K77523YT8C;
 				ENABLE_PREVIEWS = YES;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Config/Info.plist;

@@ -62,7 +62,7 @@ struct OperationView: View {
                 if let catalog = wallet.catalog {
                     PaywallView(
                         model: PaywallModel(required: context.required, action: context.action.id, api: app.api, token: { [weak app] in app?.token },
-                                            onUnauthenticated: { [weak app] in app?.endSession() }),
+                                            onUnauthenticated: { [weak app] in app?.endSession() }, storeKit: app.storeKit),
                         catalog: catalog,
                         title: "Not enough credits",
                         subtitle: "\(context.action.name) needs \(context.required.credits) credits. You have \(context.available.credits).",

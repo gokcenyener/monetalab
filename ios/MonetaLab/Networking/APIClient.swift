@@ -39,6 +39,10 @@ protocol MonetaLabAPI {
     func mockNotification(token: String, eventId: String, type: MockNotificationType, transactionId: String) async throws -> SubscriptionActionResponse
     func adQuota(token: String, action: String?) async throws -> AdQuotaResponse
     func watchAd(token: String, adEventId: String, action: String, mockOutcome: MockAdOutcome) async throws -> AdRewardResponse
+    // M3
+    func billingConfig() async throws -> BillingConfig
+    func appleAccount(token: String) async throws -> AppleAccount
+    func syncAppleTransaction(token: String, signedTransaction: String, signedRenewalInfo: String?) async throws -> AppleTransactionResponse
 }
 
 /// Talks to the real MonetaLab backend over HTTP. No responses are faked.
@@ -186,5 +190,17 @@ final class HTTPAPIClient: MonetaLabAPI {
     func watchAd(token: String, adEventId: String, action: String, mockOutcome: MockAdOutcome) async throws -> AdRewardResponse {
         try await send("POST", "ads/rewards", token: token,
                        body: ["adEventId": adEventId, "action": action, "mockOutcome": mockOutcome.rawValue])
+    }
+
+    // MARK: M3
+
+    func billingConfig() async throws -> BillingConfig { try await send("GET", "billing/config") }
+
+    func appleAccount(token: String) async throws -> AppleAccount { try await send("GET", "billing/apple/account", token: token) }
+
+    func syncAppleTransaction(token: String, signedTransaction: String, signedRenewalInfo: String?) async throws -> AppleTransactionResponse {
+        var body: [String: Any] = ["signedTransaction": signedTransaction]
+        if let signedRenewalInfo { body["signedRenewalInfo"] = signedRenewalInfo }
+        return try await send("POST", "billing/apple/transactions", token: token, body: body)
     }
 }

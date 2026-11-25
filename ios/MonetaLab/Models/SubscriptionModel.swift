@@ -33,6 +33,10 @@ final class SubscriptionModel: ObservableObject {
         self.makeId = makeId
     }
 
+    /// Set when the server runs BILLING_PROVIDER=apple (M3). Plan changes then go through the App Store; auto-renew is
+    /// managed in Apple's subscription settings, and the mock provider test controls are not shown.
+    var storeKit: StoreKitPurchaseCoordinator?
+
     var subscription: SubscriptionInfo? { state?.subscription }
     var trial: TrialInfo? { state?.trial }
 
@@ -56,6 +60,12 @@ final class SubscriptionModel: ObservableObject {
         guard let token = token(), !isWorking else { return }
         isWorking = true
         defer { isWorking = false }
+        if let storeKit {
+            // AppStore.sync() + current entitlements, each verified and applied by the server. Another account's
+            // purchases are refused by the server (no restore reassignment, D-040).
+            _ = await storeKit.restore()
+            message = storeKit.lastMessage
+        }
         do {
             let fresh = try await api.restoreSubscription(token: token)
             state = fresh
@@ -68,12 +78,15 @@ final class SubscriptionModel: ObservableObject {
     }
 
     func purchase(planId: String) async {
+        if let storeKit { return await buyWithStoreKit(storeKit, planId: planId) }
         await run(key: "purchase:\(planId):\(mockOutcome.rawValue)") { token, id in
             try await self.api.purchaseSubscription(token: token, planId: planId, transactionId: id, mockOutcome: self.mockOutcome)
         }
     }
 
     func changePlan(to planId: String) async {
+        // App Store: a higher tier upgrades now; a lower tier is scheduled by Apple for the next renewal (SUB-04/05).
+        if let storeKit { return await buyWithStoreKit(storeKit, planId: planId) }
         await run(key: "change:\(planId):\(mockOutcome.rawValue)") { token, id in
             try await self.api.changePlan(token: token, planId: planId, transactionId: id, mockOutcome: self.mockOutcome)
         }
@@ -91,6 +104,18 @@ final class SubscriptionModel: ObservableObject {
         await run(key: "notify:\(type.rawValue):\(transactionId)") { token, id in
             try await self.api.mockNotification(token: token, eventId: id, type: type, transactionId: transactionId)
         }
+    }
+
+    private func buyWithStoreKit(_ storeKit: StoreKitPurchaseCoordinator, planId: String) async {
+        guard let productID = storeKit.storeProductID(planId: planId), !isWorking else { return }
+        isWorking = true
+        message = nil
+        errorMessage = nil
+        defer { isWorking = false }
+        if case let .rejected(_, text) = await storeKit.buy(productID: productID) { errorMessage = text }
+        message = storeKit.lastMessage
+        isWorking = false
+        await refresh()
     }
 
     private func run(key: String, _ action: @escaping (String, String) async throws -> SubscriptionActionResponse) async {

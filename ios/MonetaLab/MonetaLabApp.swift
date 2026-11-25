@@ -9,6 +9,10 @@ struct MonetaLabApp: App {
         // QA fixture convenience: UI tests launch with --reset-session to start signed out.
         // It only clears the locally stored token; it has no effect on the server.
         if ProcessInfo.processInfo.arguments.contains("--reset-session") { store.clear() }
+        #if DEBUG
+        // TEMPORARY Sandbox troubleshooting: independent StoreKit probe, before any sign-in or backend call.
+        if ProcessInfo.processInfo.arguments.contains(StoreKitProbe.launchArgument) { StoreKitProbe.runDetached() }
+        #endif
         _app = StateObject(wrappedValue: AppModel(api: HTTPAPIClient(baseURL: HTTPAPIClient.configuredBaseURL()), tokenStore: store))
     }
 
