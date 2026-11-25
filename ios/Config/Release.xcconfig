@@ -1,0 +1,8 @@
+// MonetaLab app target, Release configuration (archives for TestFlight).
+// Default stays on loopback (unusable outside the Mac, never a public host by accident). For a TestFlight test
+// session, copy Local.Release.xcconfig.example to Local.Release.xcconfig (git-ignored) and set the HTTPS URL of the
+// tunnel-exposed Apple-mode API (README "TestFlight"). Release builds must use https:// (ATS blocks plain HTTP to
+// public hosts); scripts/testflight-preflight.sh checks the archived value.
+MONETALAB_API_BASE_URL = http:/$()/127.0.0.1:3000
+
+#include? "Local.Release.xcconfig"

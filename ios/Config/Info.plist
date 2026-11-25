@@ -2,14 +2,19 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<!-- Local QA fixture: allow plain HTTP only to local addresses (127.0.0.1 / localhost) for the local backend. -->
+	<!-- Local QA fixture: plain HTTP is allowed only for local-network destinations (loopback, LAN IP addresses,
+	     .local and unqualified names). No arbitrary-loads exception: public hosts still require HTTPS. -->
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<!-- Default backend URL. The iOS Simulator shares the Mac's network, so 127.0.0.1 reaches `npm start`. -->
+	<!-- Shown by iOS the first time a physical iPhone connects to the development backend on the Mac. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>MonetaLab connects to its development server on your local network.</string>
+	<!-- Backend URL from the MONETALAB_API_BASE_URL build setting: Config/Debug.xcconfig (+ optional git-ignored
+	     Config/Local.xcconfig for a physical iPhone); Release is fixed to loopback in the project. -->
 	<key>MonetaLabAPIBaseURL</key>
-	<string>http://127.0.0.1:3000</string>
+	<string>$(MONETALAB_API_BASE_URL)</string>
 </dict>
 </plist>

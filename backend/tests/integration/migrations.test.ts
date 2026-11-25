@@ -10,7 +10,7 @@ import { createEmptyDatabase } from './helpers/test-db.ts';
 // Categories (D-005): [INT] integration, [NEG] negative/edge case.
 
 // Every migration file in backend/migrations, in the order they must apply. Update when adding a migration.
-const ALL_MIGRATIONS = ['001_m1_foundation.sql', '002_m1_credit_integrity.sql', '003_m2_subscriptions_rewards.sql'];
+const ALL_MIGRATIONS = ['001_m1_foundation.sql', '002_m1_credit_integrity.sql', '003_m2_subscriptions_rewards.sql', '004_m3_apple_storekit.sql', '005_m3_apple_subscription_status.sql', '006_m3_apple_scheduled_renewals.sql'];
 
 const cleanups: Array<() => Promise<void>> = [];
 after(async () => {
@@ -34,7 +34,7 @@ async function query<T extends pg.QueryResultRow>(url: string, sql: string, para
 }
 
 describe('migration runner', () => {
-  it('[INT] fresh database: applies all migrations in order and creates exactly the expected M1 + M2 tables', async () => {
+  it('[INT] fresh database: applies all migrations in order and creates exactly the expected M1 + M2 + M3 tables', async () => {
     const db = await freshEmptyDb();
     assert.deepEqual(await migrate(db.url), ALL_MIGRATIONS);
 
@@ -44,7 +44,7 @@ describe('migration runner', () => {
     );
     assert.deepEqual(
       tables.map((t) => t.table_name),
-      ['ad_rewards', 'analytics_events', 'bucket_balances', 'credit_ledger', 'credit_packages', 'operations', 'purchases',
+      ['ad_rewards', 'analytics_events', 'apple_account_links', 'apple_notifications', 'apple_revocations', 'apple_scheduled_renewals', 'apple_transactions', 'bucket_balances', 'credit_ledger', 'credit_packages', 'operations', 'purchases',
         'schema_migrations', 'sessions', 'subscription_events', 'subscription_intro_offers', 'subscription_periods',
         'subscription_plans', 'subscription_revocations', 'subscriptions', 'trial_redemptions', 'users'],
     );

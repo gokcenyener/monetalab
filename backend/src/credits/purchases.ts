@@ -13,7 +13,7 @@
 import type { FastifyInstance } from 'fastify';
 import type pg from 'pg';
 import { authOf, requireAuth } from '../auth/require-auth.ts';
-import { PURCHASE_OUTCOMES, type BillingProvider, type PurchaseOutcome } from '../billing/provider.ts';
+import { PURCHASE_OUTCOMES, type MockBillingProvider, type PurchaseOutcome } from '../billing/provider.ts';
 import { withTransaction } from '../db/tx.ts';
 import { ApiError } from '../http/errors.ts';
 import { readWallet } from './wallet.ts';
@@ -40,7 +40,7 @@ type PurchaseRow = {
   created_at: Date;
 };
 
-export function registerPurchaseRoutes(app: FastifyInstance, pool: pg.Pool, billing: BillingProvider): void {
+export function registerPurchaseRoutes(app: FastifyInstance, pool: pg.Pool, billing: MockBillingProvider): void {
   app.post<{ Body: Body }>('/purchases', { onRequest: requireAuth(pool), schema: { body } }, async (request, reply) => {
     const userId = authOf(request).user.id;
     const { packageId, transactionId, mockOutcome } = request.body;

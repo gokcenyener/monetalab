@@ -45,6 +45,34 @@ final class FakeAPI: MonetaLabAPI {
     private(set) var adCalls: [(adEventId: String, action: String, outcome: MockAdOutcome)] = []
     private(set) var quotaCalls = 0
 
+    // MARK: M3 (scriptable; every call recorded)
+    var billingProvider = "mock"
+    var appleAccountResult: Result<AppleAccount, APIError> = .success(FakeAPI.appleAccount)
+    var appleSyncResults: [Result<AppleTransactionResponse, APIError>] = []
+    private(set) var appleSyncCalls: [(signedTransaction: String, signedRenewalInfo: String?)] = []
+    private(set) var billingConfigCalls = 0
+
+    func billingConfig() async throws -> BillingConfig { billingConfigCalls += 1; return BillingConfig(provider: billingProvider) }
+    func appleAccount(token: String) async throws -> AppleAccount { try appleAccountResult.get() }
+    func syncAppleTransaction(token: String, signedTransaction: String, signedRenewalInfo: String?) async throws -> AppleTransactionResponse {
+        appleSyncCalls.append((signedTransaction, signedRenewalInfo))
+        let response = try appleSyncResults.removeFirst().get()
+        wallet = response.wallet
+        return response
+    }
+
+    static let appleAccount = AppleAccount(
+        environment: "Sandbox", bundleId: "dev.monetalab.qa.MonetaLab", appAccountToken: "6F9619FF-8B86-D011-B42D-00C04FC964FF",
+        products: AppleProducts(
+            subscriptionGroupName: "MonetaLab Weekly",
+            consumables: ["CREDITS_S": "dev.monetalab.qa.credits.5000", "CREDITS_M": "dev.monetalab.qa.credits.7000", "CREDITS_L": "dev.monetalab.qa.credits.10000"],
+            subscriptions: ["BASIC_WEEKLY": "dev.monetalab.qa.sub.basic.weekly", "PREMIUM_WEEKLY": "dev.monetalab.qa.sub.premium.weekly", "ULTRA_WEEKLY": "dev.monetalab.qa.sub.ultra.weekly"]))
+
+    static func appleResponse(_ result: String, credits: Int, wallet: Wallet, finish: Bool = true, type: String = "CONSUMABLE") -> AppleTransactionResponse {
+        AppleTransactionResponse(result: result, productType: type, transactionId: "1", creditsGranted: credits, finishTransaction: finish,
+                                 subscription: nil, trial: FakeAPI.state().trial, wallet: wallet)
+    }
+
     func subscriptionState(token: String) async throws -> SubscriptionStateResponse { try subscriptionStateResult.get() }
     func restoreSubscription(token: String) async throws -> SubscriptionStateResponse {
         subscriptionCalls.append(("restore", nil, "", nil))

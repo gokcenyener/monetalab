@@ -1,3 +1,4 @@
+import StoreKit
 import SwiftUI
 
 /// Plan tab (M2): entitlement status, renewal/expiry date, plan changes, auto-renew, restore, and clearly labelled
@@ -5,6 +6,7 @@ import SwiftUI
 struct SubscriptionView: View {
     @ObservedObject var model: SubscriptionModel
     let plans: [SubscriptionPlan]
+    @State private var showManage = false
 
     var body: some View {
         NavigationStack {
@@ -28,8 +30,9 @@ struct SubscriptionView: View {
                         .disabled(model.isWorking)
                         .accessibilityIdentifier("plan.restore")
                 }
-                testControls
+                if model.storeKit == nil { testControls }
             }
+            .manageSubscriptionsSheet(isPresented: $showManage)
             .navigationTitle("Plan")
             .refreshable { await model.refresh() }
             .task { await model.refresh() }
@@ -80,21 +83,29 @@ struct SubscriptionView: View {
                     }
                 }
             }
-            Picker("Mock outcome", selection: $model.mockOutcome) {
-                ForEach(MockOutcome.allCases) { Text($0.label).tag($0) }
+            if model.storeKit == nil {
+                Picker("Mock outcome", selection: $model.mockOutcome) {
+                    ForEach(MockOutcome.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+                .accessibilityIdentifier("plan.outcome")
             }
-            .pickerStyle(.segmented)
-            .accessibilityIdentifier("plan.outcome")
         } header: {
             Text("Plans")
         } footer: {
-            Text("Mock subscriptions for QA (test only). Upgrades apply now; downgrades apply at the next renewal.")
+            Text(model.storeKit == nil
+                 ? "Mock subscriptions for QA (test only). Upgrades apply now; downgrades apply at the next renewal."
+                 : "App Store subscriptions. Upgrades apply now; downgrades apply at the next renewal. Credits are added by the server after it verifies Apple's signed transaction.")
         }
     }
 
     private func manageSection(_ sub: SubscriptionInfo) -> some View {
         Section("Manage") {
-            if sub.autoRenew {
+            if model.storeKit != nil {
+                // Auto-renew and cancellation are controlled by the customer's App Store account.
+                Button("Manage Subscription") { showManage = true }
+                    .accessibilityIdentifier("plan.manage")
+            } else if sub.autoRenew {
                 Button("Cancel Auto-Renew", role: .destructive) { Task { await model.setAutoRenew(false) } }
                     .disabled(model.isWorking)
                     .accessibilityIdentifier("plan.cancel")

@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MainView: View {
     @ObservedObject var app: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @StateObject private var wallet: WalletModel
     @StateObject private var operation: OperationModel
     @StateObject private var subscription: SubscriptionModel
@@ -44,7 +45,20 @@ struct MainView: View {
             AccountView(app: app)
                 .tabItem { Label("Account", systemImage: "person.crop.circle") }
         }
-        .task { await wallet.refresh() }
+        .task {
+            await wallet.refresh()
+            // M3: StoreKit only when the server runs BILLING_PROVIDER=apple; otherwise the mock provider stays.
+            // The coordinator lives on AppModel only while this user is signed in (cleared by endSession).
+            await app.configureBilling(store: AppleStoreClient(), onWallet: { [wallet] w in
+                wallet.apply(w)
+                Task { await wallet.refresh() }
+            })
+            subscription.storeKit = app.storeKit
+        }
+        .onChange(of: scenePhase) { _, phase in
+            // Deliver anything left unfinished while the app was in the background (e.g. Ask to Buy approved).
+            if phase == .active, let storeKit = app.storeKit { Task { await storeKit.deliverUnfinished() } }
+        }
     }
 }
 
@@ -62,7 +76,9 @@ struct AccountView: View {
                         .accessibilityIdentifier("account.signOut")
                 }
                 Section {
-                    Text("QA fixture. Purchases, subscriptions and rewarded ads use deterministic mock providers: no real payments, StoreKit or ad network.")
+                    Text(app.storeKit == nil
+                         ? "QA fixture. Purchases, subscriptions and rewarded ads use deterministic mock providers: no real payments, StoreKit or ad network."
+                         : "QA fixture. Purchases use the App Store (StoreKit 2) and are verified by the server. Rewarded ads are still a mock.")
                         .font(.footnote).foregroundStyle(.secondary)
                 }
             }

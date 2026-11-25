@@ -12,6 +12,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var state: State = .restoring
     @Published var authError: String?
     @Published private(set) var isWorking = false
+    /// Set only when the server runs BILLING_PROVIDER=apple (M3). nil = deterministic mock billing (M1/M2).
+    @Published private(set) var storeKit: StoreKitPurchaseCoordinator?
+    @Published private(set) var billingProvider: String?
 
     let api: MonetaLabAPI
     private let tokenStore: TokenStore
@@ -69,8 +72,23 @@ final class AppModel: ObservableObject {
         endSession()
     }
 
+    /// Asks the server which billing provider it runs, and starts StoreKit only for "apple". Called once per signed-in
+    /// session (MainView). The server decides; the app never switches to real purchases on its own.
+    func configureBilling(store: @autoclosure () -> StoreClient, onWallet: @escaping (Wallet) -> Void) async {
+        guard billingProvider == nil, let config = try? await api.billingConfig() else { return }
+        billingProvider = config.provider
+        guard config.provider == "apple" else { return }
+        let coordinator = StoreKitPurchaseCoordinator(
+            api: api, store: store(), token: { [weak self] in self?.token }, onWallet: onWallet,
+            onUnauthenticated: { [weak self] in self?.endSession(message: "Your session has ended. Please sign in again.") })
+        storeKit = coordinator
+        await coordinator.start()
+    }
+
     /// Called whenever any request returns 401.
     func endSession(message: String? = nil) {
+        storeKit = nil
+        billingProvider = nil
         tokenStore.clear()
         token = nil
         authError = message

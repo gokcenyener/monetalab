@@ -2,10 +2,10 @@
 
 A small, reproducible **QA portfolio fixture** for mobile monetization: a SwiftUI iOS app and a Node.js/TypeScript REST API on PostgreSQL. It demonstrates credit-wallet business rules through independently verifiable API, database, iOS and CI tests.
 
-> **Mock providers only.** Consumable purchases, weekly subscriptions (with the Basic free trial) and rewarded ads all use deterministic, test-controlled *mock* providers. There are **no real payments, no StoreKit/App Store integration, no TestFlight, no ad network, no external analytics SDK and no AI processing**. Prices are deliberately not shown. Real Apple integration is milestone M3 (`product-requirements.md`).
+> **Two billing modes, chosen by the server.** By default (`BILLING_PROVIDER=mock`) consumable purchases, weekly subscriptions (with the Basic free trial) and rewarded ads use deterministic, test-controlled *mock* providers, as in M1/M2. With `BILLING_PROVIDER=apple` (M3) the app buys through **StoreKit 2** and the server grants credits only after verifying Apple-signed transaction data. **Real Apple Sandbox, App Store Server API, Server Notifications delivery and TestFlight are NOT verified yet**: they need the owner's Apple Developer/App Store Connect setup ([`docs/m3-apple-setup.md`](docs/m3-apple-setup.md)). Rewarded ads remain a mock. There is no ad network, external analytics SDK or AI processing.
 
-**Status:** M1 is merged (PR #2). M2 is implemented locally on `m2-subscriptions-rewards` and awaits the owner's QA review.
-- Evidence: [`docs/m1-verification.md`](docs/m1-verification.md) and [`docs/m2-verification.md`](docs/m2-verification.md).
+**Status:** M1 (PR #2) and M2 (PR #3) are merged. M3 is implemented locally on `m3-storekit-testflight` and awaits the owner's QA review.
+- Evidence: [`docs/m1-verification.md`](docs/m1-verification.md), [`docs/m2-verification.md`](docs/m2-verification.md) and [`docs/m3-verification.md`](docs/m3-verification.md).
 - Decisions: [`docs/decisions.md`](docs/decisions.md).
 
 ## Architecture
@@ -75,7 +75,7 @@ M2 error codes:
 cd backend
 npm ci
 npm run db:up        # PostgreSQL 16.16 on 127.0.0.1:55432 (local-only credentials, not secrets)
-npm run db:migrate   # applies migrations/001, 002 and 003 (additive; existing data is kept)
+npm run db:migrate   # applies pending migrations (001..005; additive, existing data is kept)
 npm start            # API on http://127.0.0.1:3000
 ```
 `npm run db:down` stops the database. The data volume is kept.
@@ -124,6 +124,26 @@ open ios/MonetaLab.xcodeproj   # scheme MonetaLab
 - Start the backend with `npm start` first. The simulator reaches it at `http://127.0.0.1:3000`. ATS allows local networking only.
 - Override the URL with the launch environment variable `MONETALAB_API_BASE_URL`.
 
+### Apple Sandbox notifications (local QA, owner approval required)
+`npm run notifications:start` runs a separate **notification gateway** with only `POST /apple/notifications` on `127.0.0.1:3100` (rate-limited, 64 KB cap, verified Sandbox JWS only). Expose that port, never the main API, through an HTTPS tunnel, then check delivery with `npm run apple:test-notification`. Steps: `docs/m3-apple-setup.md` §5b.
+
+### Physical iPhone (development only)
+A device can't use `127.0.0.1` (that is the iPhone itself), and the backend binds loopback by default. On the same Wi-Fi:
+1. Backend, bound to all interfaces (`API_HOST` is refused with `NODE_ENV=production`):
+   ```bash
+   cd backend && npm run db:up && npm run db:migrate
+   API_HOST=:: npm start                          # mock billing; :: = IPv4 + IPv6 (needed for .local)
+   # or, App Store Sandbox prices/purchases (Apple Root CA - G3 from apple.com/certificateauthority):
+   API_HOST=:: BILLING_PROVIDER=apple APPLE_ENVIRONMENT=Sandbox APPLE_BUNDLE_ID=dev.monetalab.qa.MonetaLab \
+     APPLE_ROOT_CERTIFICATES=/path/to/AppleRootCA-G3.cer npm start
+   ```
+   Check from the Mac: `curl http://$(scutil --get LocalHostName).local:3000/health`.
+2. `cp ios/Config/Local.xcconfig.example ios/Config/Local.xcconfig` (git-ignored) and set `http://<LocalHostName>.local:3000` (`scutil --get LocalHostName`). Prefer it to the Wi-Fi IP, which can change. It applies to Debug **device** builds only; the Simulator and Release keep `127.0.0.1`.
+3. Run the **MonetaLab** scheme on the iPhone. Allow **Local Network** access when iOS asks (otherwise: Settings → Privacy & Security → Local Network → MonetaLab).
+4. If it still can't connect: same Wi-Fi (no guest/client isolation, VPN off), macOS firewall allows incoming connections for `node`, and (if you used an IP) it hasn't changed.
+
+The backend serves plain HTTP on the LAN with no rate limiting (D-S3-09): use a trusted network and stop it afterwards. ATS allows only local-network HTTP (`NSAllowsLocalNetworking`); there is no arbitrary-loads exception.
+
 **Flows:**
 - register, sign in and sign out; the session persists in the Keychain
 - wallet (four balances + total)
@@ -157,6 +177,46 @@ TEST_RUNNER_MONETALAB_API_BASE_URL=<that URL> xcodebuild -project ios/MonetaLab.
 ```
 On iOS 26+ each UI journey waits for iOS's own "Save Password?" prompt after Create Account and answers "Not Now". This takes up to 90 s per journey; `docs/m2-verification.md` §4 explains why.
 
+## Apple StoreKit 2 (M3)
+
+**Environment modes** (every test and evidence item is labelled with one of these):
+
+| Label | What it is | Who signs the data | Status here |
+|---|---|---|---|
+| MOCK | `BILLING_PROVIDER=mock` (default): M1/M2 deterministic providers | nobody (test-controlled outcomes) | tested |
+| MOCK-SIGNED FIXTURES | `BILLING_PROVIDER=apple`, `APPLE_ENVIRONMENT=Sandbox`, trusting a throwaway test CA generated per test run | test CA (not Apple) | tested (API/DB) |
+| XCODE STOREKIT | Xcode local StoreKit testing with `ios/MonetaLabTests/MonetaLab.storekit` | Xcode's local certificate | tested (iOS StoreKitTest); server path needs the pinned cert |
+| APPLE SANDBOX | Sandbox account on a signed build, server with Apple Root CA - G3 | Apple | **BLOCKED** (no Apple account access) |
+| TESTFLIGHT | uploaded build | Apple | **BLOCKED** |
+
+**Flow:** the app gets the user's `appAccountToken` from `GET /billing/apple/account`, calls `Product.purchase(options: [.appAccountToken(token)])`, and sends the verified result's JWS to `POST /billing/apple/transactions`. The server verifies the signature chain, bundle id, environment and product, binds the purchase chain to that user, fulfills idempotently, and answers `finishTransaction`. Only then does the app call `Transaction.finish()`. Unfinished transactions are re-delivered at sign-in, on foreground and from `Transaction.updates`. App Store Server Notifications V2 arrive at the public `POST /apple/notifications` (signature-verified, idempotent). `npm run apple:reconcile -- --user <uuid>` recovers missed notifications from the App Store Server API.
+
+**Products** (proposed App Store Connect ids, D-039; credits are decided by the server, prices by the App Store):
+
+| Product id | Type | MonetaLab |
+|---|---|---|
+| `dev.monetalab.qa.credits.5000` / `.7000` / `.10000` | Consumable | CREDITS_S / M / L: 5,000 / 7,000 / 10,000 CONSUMABLE |
+| `dev.monetalab.qa.sub.ultra.weekly` | Auto-renewable, group "MonetaLab Weekly", level 1 | ULTRA_WEEKLY: 12,000 SUBSCRIPTION per period |
+| `dev.monetalab.qa.sub.premium.weekly` | level 2 | PREMIUM_WEEKLY: 6,000 |
+| `dev.monetalab.qa.sub.basic.weekly` | level 3, 3-day free introductory offer | BASIC_WEEKLY: 3,000; trial 1,000 when Apple and the backend record agree (D-042) |
+
+**Server configuration** (environment variables only; nothing secret is in Git):
+```
+BILLING_PROVIDER=apple
+APPLE_ENVIRONMENT=Sandbox            # or Production (one per deployment; mismatches are refused) or Xcode (local only)
+APPLE_BUNDLE_ID=dev.monetalab.qa.MonetaLab
+APPLE_ROOT_CERTIFICATES=/secure/path/AppleRootCA-G3.cer   # download from https://www.apple.com/certificateauthority/
+APPLE_APP_APPLE_ID=<numeric app id>  # required for Production
+APPLE_ONLINE_CHECKS=true             # OCSP + current-date certificate checks (default)
+APPLE_XCODE_CERTIFICATE=/path/StoreKitTestCertificate.cer  # Xcode mode only: Xcode > Editor > Save Public Certificate
+# reconciliation CLI only:
+APPLE_API_KEY_ID=...  APPLE_API_ISSUER_ID=...  APPLE_API_PRIVATE_KEY_PATH=/secure/path/AuthKey.p8
+```
+
+**Local StoreKit in Xcode (manual):** Edit Scheme → Run → Options → StoreKit Configuration → `MonetaLabTests/MonetaLab.storekit`. The prices in that file are **local test placeholders**, not proposed prices (PRD open decision #1). Local StoreKit data is signed by Xcode, not Apple: it is never proof of a real purchase.
+
+**Test accounts:** none are stored anywhere in this repository. Sandbox testers are created by the owner in App Store Connect.
+
 ## CI
 `.github/workflows/api-regression.yml` runs on every PR to `main` (required check **`api-db-regression`**):
 1. `npm ci`, typecheck, migrations on a fresh `postgres:16.16-alpine` service
@@ -166,7 +226,8 @@ On iOS 26+ each UI journey waits for iOS's own "Save Password?" prompt after Cre
 
 It uses read-only permissions, SHA-pinned official actions, no secrets and no deployment.
 - In M2 the same job also runs the subscription, ad and controlled-clock specs, plus an analytics-report smoke step whose output goes into the artifact.
-- iOS isn't built in CI (see `docs/m2-verification.md`).
+- In M3 the same job also starts an Apple-mode server and runs the signed-fixture specs (`tests/api/apple.spec.ts`) and M3 DB/unit tests. They need no Apple credentials: the test CA is generated per run.
+- iOS isn't built in CI (see `docs/m3-verification.md` for why and what runs locally).
 
 ## Known limitations (local QA fixture only)
 These are accepted for this local M1 fixture only (D-S3-09, D-021). They are **not acceptable for any public or production deployment**:
@@ -176,8 +237,9 @@ These are accepted for this local M1 fixture only (D-S3-09, D-021). They are **n
 - expired and revoked sessions aren't cleaned up
 - the database has no CHECK enforcing email normalization: the app normalizes emails and a case-insensitive unique index prevents duplicates (intentionally deferred, D-021)
 - billing, subscriptions and ads are mock-only. The mock providers and the test clock file refuse to start with `NODE_ENV=production`.
-- the mock provider notification route (`/subscriptions/mock-notifications`) lets an authenticated user simulate their **own** renewals, expiries and refunds. That is acceptable only for this mock fixture: M3 replaces it with signed App Store Server Notifications.
-- trial eligibility is the backend's own record, and it can't detect the same Apple ID across different app accounts (PRD §7 #9)
+- the mock provider notification route (`/subscriptions/mock-notifications`) lets an authenticated user simulate their **own** renewals, expiries and refunds. It exists only in mock mode; in Apple mode only signed App Store Server Notifications change state.
+- trial eligibility: Apple decides it per Apple ID; the backend adds its own anti-duplication record. MonetaLab can't detect the same Apple ID across different app accounts (PRD §7 #9).
+- Apple mode: consumable refunds are recorded without clawback (PRD §7 #2); billing grace period is not applied (PRD §7 #6); purchases made outside the app without MonetaLab's `appAccountToken` can't be claimed (PRD §7 #7). See D-040..D-046.
 
 ## M1 feature matrix
 | PRD M1 requirement | Status |
@@ -194,12 +256,16 @@ These are accepted for this local M1 fixture only (D-S3-09, D-021). They are **n
 | **M2** Rewarded ads: +100 REWARD, 10 per UTC day, duplicates and concurrency (ADS-01..04) | Implemented + tested (DB-enforced cap) |
 | **M2** Lifecycle analytics events and conversion/churn reports (PRD §4) | Implemented + tested. The churn definition isn't approved. |
 | **M2** iOS subscription, trial and ad flows | Implemented and tested: 36 unit + 3 UI tests pass on the simulator against the real backend (`docs/m2-verification.md` §4) |
+| **M3** StoreKit 2 purchases, Transaction.updates, unfinished recovery, restore | Implemented; tested with fake StoreKit and Xcode StoreKitTest. Apple Sandbox **BLOCKED** |
+| **M3** Server-side Apple JWS verification, ownership binding, idempotent fulfillment | Implemented; tested with signed fixtures (not Apple-signed) |
+| **M3** App Store Server Notifications V2 + reconciliation | Implemented; tested with signed fixtures and a fake API. Real delivery/API **BLOCKED** |
+| **M3** TestFlight | **BLOCKED** (no signing team or App Store Connect access) |
 
 Full evidence, counts and every PASS / FAIL / NOT VERIFIED item: [`docs/m1-verification.md`](docs/m1-verification.md).
 
 ## Repository layout
 ```
-backend/   src/ (auth, credits, billing, subscriptions, ads, analytics, db, http), migrations/, tests/{unit,integration,api}
-ios/       MonetaLab.xcodeproj, MonetaLab/ (app), MonetaLabTests/, MonetaLabUITests/, Config/Info.plist
+backend/   src/ (auth, credits, billing incl. billing/apple, subscriptions, ads, analytics, db, http), migrations/, tests/{unit,integration,api,support}
+ios/       MonetaLab.xcodeproj, MonetaLab/ (app, Billing/ = StoreKit 2), MonetaLabTests/ (incl. MonetaLab.storekit), MonetaLabUITests/, Config/Info.plist
 docs/      plans, decision log, per-slice verification reports, m1-verification.md
 ```

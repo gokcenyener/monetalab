@@ -95,7 +95,7 @@ export async function startOwnedServer(options: StartOptions): Promise<OwnedServ
     stopTimeoutMs = 5_000,
   } = options;
 
-  const child = spawn(command, args, { cwd, env: { ...env, PORT: '0' }, stdio: ['ignore', 'pipe', 'pipe'] });
+  const child = spawn(command, args, { cwd, env: { ...env, PORT: '0', API_HOST: '127.0.0.1' }, stdio: ['ignore', 'pipe', 'pipe'] });
   const recent: string[] = [];
   const remember = (source: string) => (chunk: Buffer) => {
     for (const line of chunk.toString('utf8').split('\n')) if (line.trim()) recent.push(`[${source}] ${line}`);

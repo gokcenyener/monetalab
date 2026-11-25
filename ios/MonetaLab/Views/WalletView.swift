@@ -42,7 +42,7 @@ struct WalletView: View {
                 if let catalog = wallet.catalog {
                     PaywallView(
                         model: PaywallModel(required: nil, api: app.api, token: { [weak app] in app?.token },
-                                            onUnauthenticated: { [weak app] in app?.endSession() }),
+                                            onUnauthenticated: { [weak app] in app?.endSession() }, storeKit: app.storeKit),
                         catalog: catalog,
                         title: "Get Credits",
                         onWalletChanged: { w in

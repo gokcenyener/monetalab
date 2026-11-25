@@ -1,0 +1,164 @@
+{
+  "identifier" : "4D5E7A10",
+  "nonRenewingSubscriptions" : [
+
+  ],
+  "products" : [
+    {
+      "displayPrice" : "0.99",
+      "familyShareable" : false,
+      "internalID" : "6740000001",
+      "localizations" : [
+        {
+          "description" : "5,000 MonetaLab credits (local StoreKit test product)",
+          "displayName" : "Credits S",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "dev.monetalab.qa.credits.5000",
+      "referenceName" : "Credits S 5000",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "1.99",
+      "familyShareable" : false,
+      "internalID" : "6740000002",
+      "localizations" : [
+        {
+          "description" : "7,000 MonetaLab credits (local StoreKit test product)",
+          "displayName" : "Credits M",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "dev.monetalab.qa.credits.7000",
+      "referenceName" : "Credits M 7000",
+      "type" : "Consumable"
+    },
+    {
+      "displayPrice" : "2.99",
+      "familyShareable" : false,
+      "internalID" : "6740000003",
+      "localizations" : [
+        {
+          "description" : "10,000 MonetaLab credits (local StoreKit test product)",
+          "displayName" : "Credits L",
+          "locale" : "en_US"
+        }
+      ],
+      "productID" : "dev.monetalab.qa.credits.10000",
+      "referenceName" : "Credits L 10000",
+      "type" : "Consumable"
+    }
+  ],
+  "settings" : {
+    "_failTransactionsEnabled" : false,
+    "_locale" : "en_US",
+    "_storefront" : "USA",
+    "_storeKitErrors" : [
+
+    ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21000001",
+      "localizations" : [
+
+      ],
+      "name" : "MonetaLab Weekly",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "4.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "6740000013",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "12,000 credits every week (local StoreKit test product)",
+              "displayName" : "Ultra Weekly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "dev.monetalab.qa.sub.ultra.weekly",
+          "recurringSubscriptionPeriod" : "P1W",
+          "referenceName" : "Ultra Weekly",
+          "subscriptionGroupID" : "21000001",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "3.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "6740000012",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "6,000 credits every week (local StoreKit test product)",
+              "displayName" : "Premium Weekly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "dev.monetalab.qa.sub.premium.weekly",
+          "recurringSubscriptionPeriod" : "P1W",
+          "referenceName" : "Premium Weekly",
+          "subscriptionGroupID" : "21000001",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        },
+        {
+          "adHocOffers" : [
+
+          ],
+          "codeOffers" : [
+
+          ],
+          "displayPrice" : "2.99",
+          "familyShareable" : false,
+          "groupNumber" : 3,
+          "internalID" : "6740000011",
+          "introductoryOffer" : {
+            "internalID" : "6740000021",
+            "paymentMode" : "free",
+            "subscriptionPeriod" : "P3D"
+          },
+          "localizations" : [
+            {
+              "description" : "3,000 credits every week (local StoreKit test product)",
+              "displayName" : "Basic Weekly",
+              "locale" : "en_US"
+            }
+          ],
+          "productID" : "dev.monetalab.qa.sub.basic.weekly",
+          "recurringSubscriptionPeriod" : "P1W",
+          "referenceName" : "Basic Weekly",
+          "subscriptionGroupID" : "21000001",
+          "type" : "RecurringSubscription",
+          "winbackOffers" : [
+
+          ]
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

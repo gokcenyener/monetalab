@@ -8,6 +8,7 @@
 import { test as base, expect, type APIRequestContext } from '@playwright/test';
 import { writeFileSync } from 'node:fs';
 import pg from 'pg';
+import { AppleTestSigner } from '../../support/apple-signing.ts';
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -23,7 +24,15 @@ export type Harness = { baseUrl: string; pid: number; port: number; serverAppNam
  */
 export type ControlledClock = { api: APIRequestContext; set: (iso: string) => void };
 
-export const test = base.extend<{ api: APIRequestContext; harness: Harness; clock: ControlledClock }, { db: pg.Pool }>({
+/** The Apple-mode server (BILLING_PROVIDER=apple, Sandbox) and the signer its trusted test root belongs to. */
+export type AppleMode = { api: APIRequestContext; signer: AppleTestSigner };
+
+export const test = base.extend<{ api: APIRequestContext; harness: Harness; clock: ControlledClock; apple: AppleMode }, { db: pg.Pool }>({
+  apple: async ({ playwright }, use) => {
+    const context = await playwright.request.newContext({ baseURL: requireEnv('API_APPLE_BASE_URL') });
+    await use({ api: context, signer: AppleTestSigner.load(requireEnv('API_APPLE_SIGNER_DIR')) });
+    await context.dispose();
+  },
   harness: async ({}, use) => {
     await use({
       baseUrl: requireEnv('API_BASE_URL'),

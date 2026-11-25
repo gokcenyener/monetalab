@@ -1,0 +1,3 @@
+// Copy to ios/Config/Local.Release.xcconfig (git-ignored). HTTPS URL of the API instance started with
+// API_EXPOSURE=tunnel (Apple billing only, no mock/ads routes, rate-limited) behind a Cloudflare tunnel.
+MONETALAB_API_BASE_URL = https:/$()/example.trycloudflare.com

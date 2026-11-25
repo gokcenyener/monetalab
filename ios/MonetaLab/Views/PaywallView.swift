@@ -37,9 +37,18 @@ struct PaywallView: View {
                 case .subscription: subscriptionTab
                 case .credits: creditsTab
                 }
-                if model.action != nil { adSection }
+                if model.action != nil && model.adsAvailable { adSection }
                 if let error = model.loadError {
                     Section { Text(error).foregroundStyle(.red).accessibilityIdentifier("paywall.loadError") }
+                }
+                if model.storeProductsIncomplete {
+                    Section {
+                        Text("Some App Store prices are unavailable right now. Those items can't be bought until the App Store returns them.")
+                            .foregroundStyle(.secondary).accessibilityIdentifier("paywall.storeUnavailable")
+                    }
+                    #if DEBUG
+                    if let storeKit = model.storeKit { StoreKitDiagnosticsSection(storeKit: storeKit, catalog: catalog) }
+                    #endif
                 }
             }
             .navigationTitle(title)
@@ -72,6 +81,9 @@ struct PaywallView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("\(plan.name) Weekly").font(.headline)
                                 Text("\(plan.creditsPerPeriod.credits) credits per week")
+                                if let price = model.storeKit?.displayPrice(productID: model.storeKit?.storeProductID(planId: plan.id)) {
+                                    Text("\(price) per week (App Store)").font(.footnote).accessibilityIdentifier("paywall.price.\(plan.id)")
+                                }
                                 // PRD §3.1: trial messaging only when the server says this customer is eligible.
                                 if plan.introductoryOffer != nil, let trial = model.trialMessage {
                                     Text(trial).font(.footnote).foregroundStyle(.green)
@@ -86,20 +98,23 @@ struct PaywallView: View {
                     .accessibilityIdentifier("paywall.plan.\(plan.id)")
                 }
             }
-            mockOutcomeSection
+            if !model.isStoreKit { mockOutcomeSection }
             Section {
                 Button(model.isPurchasing ? "Processing…" : "Continue") {
                     Task {
                         if let wallet = await model.subscribeTapped(plans: catalog.subscriptions) { onWalletChanged(wallet) }
                     }
                 }
-                .disabled(model.selectedPlanId == nil || model.isBusy || model.subscriptionState == nil)
+                .disabled(model.selectedPlanId == nil || model.isBusy || model.subscriptionState == nil
+                          || !model.isAvailableInStore(planId: model.selectedPlanId ?? ""))
                 .accessibilityIdentifier("paywall.subscriptionContinue")
                 if let message = model.message {
                     Text(message).accessibilityIdentifier("paywall.message")
                 }
             } footer: {
-                Text("Mock subscription for QA: no real App Store purchase. Prices are not shown.")
+                Text(model.isStoreKit
+                     ? "Purchased through the App Store. Credits are added by the MonetaLab server after it verifies Apple's signed transaction."
+                     : "Mock subscription for QA: no real App Store purchase. Prices are not shown.")
             }
         }
     }
@@ -161,6 +176,9 @@ struct PaywallView: View {
                             Text(pack.name)
                             Spacer()
                             Text("\(pack.credits.credits) credits")
+                            if let price = model.storeKit?.displayPrice(productID: model.storeKit?.storeProductID(packageId: pack.id)) {
+                                Text(price).foregroundStyle(.secondary).accessibilityIdentifier("paywall.price.\(pack.id)")
+                            }
                             if model.selectedPackageId == pack.id { Image(systemName: "checkmark") }
                         }
                     }
@@ -168,14 +186,15 @@ struct PaywallView: View {
                     .accessibilityIdentifier("paywall.package.\(pack.id)")
                 }
             }
-            mockOutcomeSection
+            if !model.isStoreKit { mockOutcomeSection }
             Section {
                 Button(model.isPurchasing ? "Processing…" : "Continue") {
                     Task {
                         if let wallet = await model.continueTapped() { onWalletChanged(wallet) }
                     }
                 }
-                .disabled(model.selectedPackageId == nil || model.isBusy)
+                .disabled(model.selectedPackageId == nil || model.isBusy
+                          || !model.isAvailableInStore(packageId: model.selectedPackageId ?? ""))
                 .accessibilityIdentifier("paywall.continue")
                 // Result feedback directly under the action the user just took.
                 if let message = model.message {
@@ -185,3 +204,47 @@ struct PaywallView: View {
         }
     }
 }
+
+#if DEBUG
+/// Debug builds only, and only while the last StoreKit product request was incomplete: compares the backend catalog
+/// (names, credits, App Store product ids) with what StoreKit actually returned. Product ids only, no account data.
+private struct StoreKitDiagnosticsSection: View {
+    @ObservedObject var storeKit: StoreKitPurchaseCoordinator
+    let catalog: Catalog
+    @State private var probeResult: String?
+
+    var body: some View {
+        Section {
+            if let report = storeKit.productReport {
+                Text("Requested \(report.requested.count), StoreKit returned \(report.returned.count)")
+                if let error = report.error { Text("StoreKit error: \(error)").foregroundStyle(.red) }
+            } else {
+                Text("No StoreKit product request yet (account not loaded).")
+            }
+            Text("Server: \(storeKit.account?.environment ?? "?"), bundle \(storeKit.account?.bundleId ?? "?")")
+            Text("App bundle: \(Bundle.main.bundleIdentifier ?? "?")")
+            ForEach(catalog.consumables) { pack in row("\(pack.name)", storeKit.storeProductID(packageId: pack.id)) }
+            ForEach(catalog.subscriptions) { plan in row("\(plan.name) Weekly", storeKit.storeProductID(planId: plan.id)) }
+            Button("Request products again") { Task { await storeKit.loadProducts() } }
+            Button("Run independent StoreKit probe (\(StoreKitProbe.productID))") {
+                Task { probeResult = await Task.detached { await StoreKitProbe.run() }.value }
+            }
+            if let probeResult { Text(probeResult).textSelection(.enabled) }
+        } header: {
+            Text("StoreKit diagnostics (debug build)")
+        }
+        .font(.footnote)
+        .accessibilityIdentifier("paywall.storekitDiagnostics")
+    }
+
+    private func row(_ name: String, _ productID: String?) -> some View {
+        let product = productID.flatMap { storeKit.products[$0] }
+        return VStack(alignment: .leading) {
+            Text("\(name) → \(productID ?? "no App Store id")")
+            Text(product.map { "StoreKit Product: yes, displayPrice \($0.displayPrice.isEmpty ? "missing" : "available")" }
+                 ?? "StoreKit Product: not returned")
+                .foregroundStyle(product == nil ? .red : .green)
+        }
+    }
+}
+#endif

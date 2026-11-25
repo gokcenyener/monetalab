@@ -1,0 +1,7 @@
+// MonetaLab app target, Debug configuration only.
+// Backend URL baked into Info.plist (MonetaLabAPIBaseURL). The Simulator shares the Mac's network, so loopback works.
+// For a physical iPhone, copy Local.xcconfig.example to Local.xcconfig (git-ignored) and set the Mac's LAN address.
+// Note: "//" starts a comment in xcconfig files, hence "http:/$()/".
+MONETALAB_API_BASE_URL = http:/$()/127.0.0.1:3000
+
+#include? "Local.xcconfig"

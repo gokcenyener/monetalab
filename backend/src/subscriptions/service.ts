@@ -9,12 +9,12 @@
 import { isDeepStrictEqual } from 'node:util';
 import type pg from 'pg';
 import { recordAnalyticsEvent } from '../analytics/events.ts';
-import type { BillingProvider, PurchaseOutcome } from '../billing/provider.ts';
+import type { MockBillingProvider, PurchaseOutcome } from '../billing/provider.ts';
 import { readWallet, type Wallet } from '../credits/wallet.ts';
 import { ApiError } from '../http/errors.ts';
 import {
   decide, isEntitled, PLANS, SUBSCRIPTION_GROUP, TRIAL_OFFER, trialEligibility,
-  type Command, type ExpirationReason, type History, type Period, type PlanId, type State,
+  type Command, type Decision, type ExpirationReason, type History, type Period, type PlanId, type State,
 } from './lifecycle.ts';
 
 type Tx = pg.PoolClient;
@@ -62,7 +62,7 @@ export async function loadHistory(db: Pick<Tx, 'query'>, userId: string): Promis
 }
 
 /** Expire the remaining SUBSCRIPTION credits, recorded once against the period they belonged to. Returns the amount. */
-async function expireRemaining(tx: Tx, userId: string, periodId: string, reason: ExpirationReason): Promise<number> {
+export async function expireRemaining(tx: Tx, userId: string, periodId: string, reason: ExpirationReason): Promise<number> {
   const wallet = await readWallet(tx, userId, true);
   const amount = wallet.balances.SUBSCRIPTION;
   if (amount <= 0) return 0;
@@ -84,7 +84,18 @@ async function expireRemaining(tx: Tx, userId: string, periodId: string, reason:
  * newer verified period arrived yet, its remaining credits expire now (PERIOD_ENDED). Status and analytics change
  * only on authoritative provider events, so a late renewal still works. Caller holds the user lock.
  */
+/**
+ * Provider hook (F-M3-04): applies provider periods that were delivered before they started and have now started
+ * (Apple scheduled renewals), before the stale-period check. Set by the Apple billing module; null = none.
+ */
+type ScheduledPeriodActivator = (tx: Tx, userId: string, now: Date) => Promise<void>;
+let scheduledPeriodActivator: ScheduledPeriodActivator | null = null;
+export function setScheduledPeriodActivator(fn: ScheduledPeriodActivator | null): void {
+  scheduledPeriodActivator = fn;
+}
+
 export async function reconcileUser(tx: Tx, userId: string, now: Date): Promise<void> {
+  if (scheduledPeriodActivator) await scheduledPeriodActivator(tx, userId, now);
   const loaded = await loadState(tx, userId);
   if (!loaded) return;
   const { state } = loaded;
@@ -115,7 +126,7 @@ function periodView(p: { id: string; transactionId: string; planId: PlanId; kind
 
 export async function runLifecycle(
   tx: Tx,
-  deps: { billing: BillingProvider; now: Date },
+  deps: { billing: MockBillingProvider; now: Date },
   userId: string,
   input: LifecycleInput,
 ): Promise<LifecycleOutcome> {
@@ -159,9 +170,6 @@ export async function runLifecycle(
   const decision = decide(state, history, command, now);
   if (decision.kind === 'reject') throw new ApiError(decision.status, decision.code, decision.message);
 
-  let result = decision.result;
-  let httpStatus = decision.kind === 'apply' ? 201 : 200;
-  let periodOut: unknown = null;
   const newPeriod = decision.newPeriod;
 
   // Purchases and upgrades are verified with the provider only when the rules would apply them.
@@ -175,6 +183,40 @@ export async function runLifecycle(
     }
   }
 
+  const applied = await applyDecision(tx, userId, loaded, decision, {
+    provider: 'mock', analyticsKey: input.eventKey, now, trialSource: 'MOCK_PROVIDER',
+  });
+  return record(tx, userId, input, applied.result, applied.httpStatus, applied.period, now);
+}
+
+export type ApplyContext = {
+  provider: 'mock' | 'apple';
+  /** Idempotency key of the source fact; analytics events are deduplicated by it. */
+  analyticsKey: string;
+  now: Date;
+  trialSource: 'MOCK_PROVIDER' | 'APPLE_VERIFIED';
+};
+
+/**
+ * Applies a lifecycle decision (from lifecycle.ts or the Apple mapping) atomically. Caller holds the user lock and has
+ * already rejected 'reject' decisions. Shared by the mock and Apple providers so both obey the same accounting.
+ * - A new period is always recorded (APPLIED or SUPERSEDED, immutable).
+ * - The current period's remaining SUBSCRIPTION credits expire once, against that period.
+ * - Credits are granted once per applied period (DB-enforced), only when the decision says so and the period has credits.
+ */
+export async function applyDecision(
+  tx: Tx,
+  userId: string,
+  loaded: LoadedState,
+  decision: Exclude<Decision, { kind: 'reject' }>,
+  ctx: ApplyContext,
+): Promise<{ result: string; httpStatus: number; period: unknown }> {
+  const { now } = ctx;
+  const state = loaded?.state ?? null;
+  let result = decision.result;
+  let httpStatus = decision.kind === 'apply' ? 201 : 200;
+  let periodOut: unknown = null;
+  const newPeriod = decision.newPeriod;
   let subscriptionId = loaded?.subscriptionId;
   let newPeriodId: string | null = null;
   if (newPeriod) {
@@ -183,16 +225,16 @@ export async function runLifecycle(
       // First subscription for this user: the state row points at the period inserted next (deferred FK).
       const created = await tx.query<{ id: string }>(
         `INSERT INTO subscriptions (user_id, group_id, provider, status, plan_id, auto_renew, current_period_id)
-         VALUES ($1, $2, 'mock', $3, $4, true, $5) RETURNING id`,
-        [userId, SUBSCRIPTION_GROUP, decision.kind === 'apply' ? decision.next.status : 'ACTIVE', newPeriod.planId, newPeriodId],
+         VALUES ($1, $2, $6, $3, $4, true, $5) RETURNING id`,
+        [userId, SUBSCRIPTION_GROUP, decision.kind === 'apply' ? decision.next.status : 'ACTIVE', newPeriod.planId, newPeriodId, ctx.provider],
       );
       subscriptionId = created.rows[0]!.id;
     }
     await tx.query(
       `INSERT INTO subscription_periods (id, subscription_id, user_id, provider, transaction_id, plan_id, kind, starts_at, ends_at, credits, disposition)
-       VALUES ($1, $2, $3, 'mock', $4, $5, $6, $7, $8, $9, $10)`,
+       VALUES ($1, $2, $3, $11, $4, $5, $6, $7, $8, $9, $10)`,
       [newPeriodId, subscriptionId, userId, newPeriod.transactionId, newPeriod.planId, newPeriod.kind,
-        newPeriod.startsAt, newPeriod.endsAt, newPeriod.credits, newPeriod.disposition],
+        newPeriod.startsAt, newPeriod.endsAt, newPeriod.credits, newPeriod.disposition, ctx.provider],
     );
     periodOut = periodView({ ...newPeriod, id: newPeriodId }, { disposition: newPeriod.disposition });
   }
@@ -218,7 +260,7 @@ export async function runLifecycle(
       [subscriptionId, applied ? newPeriodId : null, next.status ?? null, next.planId ?? null,
         'pendingPlanId' in next, next.pendingPlanId ?? null, next.autoRenew ?? null],
     );
-    if (newPeriod && applied && decision.grant) {
+    if (newPeriod && applied && decision.grant && newPeriod.credits > 0) {
       await tx.query(
         `INSERT INTO credit_ledger (user_id, bucket, delta, entry_type, subscription_period_id)
          VALUES ($1, 'SUBSCRIPTION', $2, 'SUBSCRIPTION_GRANT', $3)`,
@@ -227,18 +269,18 @@ export async function runLifecycle(
     }
     if (decision.redeemTrial) {
       await tx.query(
-        `INSERT INTO trial_redemptions (user_id, group_id, period_id, source, redeemed_at) VALUES ($1, $2, $3, 'MOCK_PROVIDER', $4)`,
-        [userId, SUBSCRIPTION_GROUP, newPeriodId, now],
+        `INSERT INTO trial_redemptions (user_id, group_id, period_id, source, redeemed_at) VALUES ($1, $2, $3, $5, $4)`,
+        [userId, SUBSCRIPTION_GROUP, newPeriodId, now, ctx.trialSource],
       );
     }
     for (const event of decision.analytics) {
-      await recordAnalyticsEvent(tx, { userId, name: event.name, dedupeKey: input.eventKey, occurredAt: now, properties: event.properties });
+      await recordAnalyticsEvent(tx, { userId, name: event.name, dedupeKey: ctx.analyticsKey, occurredAt: now, properties: event.properties });
     }
   } else {
     httpStatus = 200;
     result = decision.result;
   }
-  return record(tx, userId, input, result, httpStatus, periodOut, now);
+  return { result, httpStatus, period: periodOut };
 }
 
 async function record(tx: Tx, userId: string, input: LifecycleInput, result: string, httpStatus: number, period: unknown, now: Date): Promise<LifecycleOutcome> {
@@ -254,12 +296,18 @@ async function record(tx: Tx, userId: string, input: LifecycleInput, result: str
 }
 
 /** Customer-facing view of the subscription and trial eligibility. */
-export async function subscriptionView(db: Pick<Tx, 'query'>, userId: string, now: Date) {
+export async function subscriptionView(db: Pick<Tx, 'query'>, userId: string, now: Date, provider: 'mock' | 'apple' = 'mock') {
   const loaded = await loadState(db, userId);
   const history = await loadHistory(db, userId);
   const eligibility = trialEligibility(history);
   const state = loaded?.state ?? null;
   const entitled = isEntitled(state, now);
+  // Apple mode: Apple's own status and renewal intent, kept apart from MonetaLab's entitlement/lifecycle (migration 005).
+  const apple = provider === 'apple' && loaded
+    ? (await db.query<{ apple_status: string | null; apple_auto_renew: boolean | null; apple_expiration_intent: number | null; apple_status_signed_at: Date | null }>(
+        'SELECT apple_status, apple_auto_renew, apple_expiration_intent, apple_status_signed_at FROM subscriptions WHERE id = $1', [loaded.subscriptionId],
+      )).rows[0]
+    : undefined;
   return {
     subscription: state && {
       id: loaded!.subscriptionId,
@@ -273,19 +321,31 @@ export async function subscriptionView(db: Pick<Tx, 'query'>, userId: string, no
       renewsAt: entitled && state.autoRenew ? state.current.endsAt.toISOString() : null,
       expiresAt: state.current.endsAt.toISOString(),
       currentPeriod: periodView(state.current, { revoked: state.current.revoked }),
+      ...(apple && {
+        apple: {
+          status: apple.apple_status,
+          autoRenew: apple.apple_auto_renew,
+          expirationIntent: apple.apple_expiration_intent,
+          statusSignedAt: apple.apple_status_signed_at?.toISOString() ?? null,
+        },
+      }),
     },
     trial: {
       eligible: eligibility.eligible,
       reason: eligibility.reason,
-      // Eligibility comes only from the backend's own record (mock). Apple-verified eligibility is added in M3.
-      source: 'BACKEND_RECORD',
+      // mock: the backend's own record decides. apple (D-042): the backend record is only HALF of the rule; Apple decides
+      // intro-offer eligibility per Apple ID, and the app must also check StoreKit's isEligibleForIntroOffer before
+      // showing an offer. Trial credits are granted only when BOTH agree (verified free-trial transaction + this record).
+      source: provider === 'apple' ? 'BACKEND_RECORD_AND_APPLE' : 'BACKEND_RECORD',
       // PRD §3.1: trial messaging is present only when the customer is eligible.
       offer: eligibility.eligible
         ? {
             planId: TRIAL_OFFER.planId,
             days: TRIAL_OFFER.days,
             credits: TRIAL_OFFER.credits,
-            message: `Start a ${TRIAL_OFFER.days}-day free trial with ${TRIAL_OFFER.credits.toLocaleString('en-US')} credits. Then Basic renews weekly with ${PLANS.BASIC_WEEKLY.credits.toLocaleString('en-US')} credits.`,
+            message: provider === 'apple'
+              ? `Basic includes a ${TRIAL_OFFER.days}-day free trial with ${TRIAL_OFFER.credits.toLocaleString('en-US')} credits when the App Store confirms you're eligible. Then Basic renews weekly with ${PLANS.BASIC_WEEKLY.credits.toLocaleString('en-US')} credits.`
+              : `Start a ${TRIAL_OFFER.days}-day free trial with ${TRIAL_OFFER.credits.toLocaleString('en-US')} credits. Then Basic renews weekly with ${PLANS.BASIC_WEEKLY.credits.toLocaleString('en-US')} credits.`,
           }
         : null,
     },
