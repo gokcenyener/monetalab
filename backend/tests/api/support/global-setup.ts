@@ -8,7 +8,9 @@
  *   4. Publish connection details to the test workers through environment variables.
  *   4b. Start a SECOND owned server on the same database with a controlled business clock: MONETALAB_TEST_CLOCK_FILE
  *       points at a temp file that time-travel specs rewrite (D-033). No HTTP endpoint can change time.
- *   5. Teardown (the returned function): stop both servers (SIGTERM, then SIGKILL after 5 s), drop the database,
+ *   4c. Start a THIRD owned server on the same database with BILLING_PROVIDER=apple (Sandbox). It trusts only a
+ *       throwaway test root generated for this run (tests/support/apple-signing.ts), whose keys live in a temp dir.
+ *   5. Teardown (the returned function): stop all servers (SIGTERM, then SIGKILL after 5 s), drop the database,
  *      remove the clock file.
  * If any step fails, everything created so far is cleaned up before the error is re-thrown.
  * The developer `monetalab` database and Docker volumes are never modified.
@@ -22,6 +24,7 @@ import { databaseUrl } from '../../../src/config.ts';
 import { migrate } from '../../../src/db/migrate.ts';
 import { createDisposableDatabase, dropDisposableDatabase, urlForDatabase } from './disposable-db.ts';
 import { startOwnedServer, type OwnedServer } from './server-harness.ts';
+import { AppleTestSigner, TEST_BUNDLE_ID } from '../../support/apple-signing.ts';
 
 const BACKEND_DIR = fileURLToPath(new URL('../../../', import.meta.url));
 
@@ -30,16 +33,23 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
   let server: OwnedServer | undefined;
   let clockServer: OwnedServer | undefined;
   let clockDir: string | undefined;
+  let appleServer: OwnedServer | undefined;
+  let appleDir: string | undefined;
 
   const teardown = async () => {
     const problems: string[] = [];
-    for (const owned of [server, clockServer]) {
+    for (const owned of [server, clockServer, appleServer]) {
       if (!owned) continue;
       const result = await owned.stop();
       if (result.forced) problems.push(`server pid ${owned.pid} ignored SIGTERM and was killed`);
     }
     server = undefined;
     clockServer = undefined;
+    appleServer = undefined;
+    if (appleDir) {
+      rmSync(appleDir, { recursive: true, force: true });
+      appleDir = undefined;
+    }
     if (clockDir) {
       rmSync(clockDir, { recursive: true, force: true });
       clockDir = undefined;
@@ -87,6 +97,24 @@ export default async function globalSetup(): Promise<() => Promise<void>> {
     });
     process.env.API_CLOCK_BASE_URL = clockServer.baseUrl;
     process.env.API_CLOCK_FILE = clockFile;
+
+    appleDir = mkdtempSync(join(tmpdir(), 'monetalab-api-apple-'));
+    const files = AppleTestSigner.create({ name: `MonetaLab API Test ${randomBytes(3).toString('hex')}` }).save(appleDir);
+    appleServer = await startOwnedServer({
+      cwd: BACKEND_DIR,
+      env: {
+        ...process.env,
+        DATABASE_URL: urlForDatabase(databaseUrl(), dbName, `${serverAppName}_apple`),
+        BILLING_PROVIDER: 'apple',
+        APPLE_ENVIRONMENT: 'Sandbox',
+        APPLE_BUNDLE_ID: TEST_BUNDLE_ID,
+        APPLE_ROOT_CERTIFICATES: files.rootPath,
+        // The test chain has no OCSP responder; verification uses the signed date (library behaviour).
+        APPLE_ONLINE_CHECKS: 'false',
+      },
+    });
+    process.env.API_APPLE_BASE_URL = appleServer.baseUrl;
+    process.env.API_APPLE_SIGNER_DIR = appleDir;
   } catch (error) {
     await teardown();
     throw error;

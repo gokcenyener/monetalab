@@ -37,7 +37,7 @@ test.describe('GET /health (API smoke)', () => {
 
   test('[INT] the disposable database has the real migrations applied', async ({ db }) => {
     const { rows } = await db.query<{ version: string }>('SELECT version FROM schema_migrations ORDER BY version');
-    expect(rows.map((r) => r.version)).toEqual(['001_m1_foundation.sql', '002_m1_credit_integrity.sql', '003_m2_subscriptions_rewards.sql']);
+    expect(rows.map((r) => r.version)).toEqual(['001_m1_foundation.sql', '002_m1_credit_integrity.sql', '003_m2_subscriptions_rewards.sql', '004_m3_apple_storekit.sql', '005_m3_apple_subscription_status.sql', '006_m3_apple_scheduled_renewals.sql']);
   });
 
   test('[NEG] an unknown route returns 404 and does not expose server details', async ({ api }) => {
